@@ -238,7 +238,7 @@ function m5NavigationScope(): HTMLElement {
 function m5NavigationOptions(): HTMLButtonElement[] {
   if (!canNavigateM5Options()) return [];
   return Array.from(m5NavigationScope().querySelectorAll<HTMLButtonElement>("button:not(:disabled)"))
-    .filter(button => !["dismiss-decision", "reopen-decision"].includes(button.id) && !button.classList.contains("modal-close") && button.getClientRects().length > 0)
+    .filter(button => !["dismiss-decision", "reopen-decision"].includes(button.id) && button.getClientRects().length > 0)
     .sort((a, b) => {
       const first = a.getBoundingClientRect();
       const second = b.getBoundingClientRect();

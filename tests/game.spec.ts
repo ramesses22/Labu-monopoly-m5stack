@@ -100,6 +100,42 @@ test('screen tap and M5Stack shake both roll while serial is connected', async (
   await expect.poll(() => page.evaluate(() => (window as Window & { __hostCommands?: string[] }).__hostCommands)).toContain('DISCONNECT\n');
 });
 
+test('M5Stack can close the vehicle showroom after its purchase action is used', async ({ page }) => {
+  await page.addInitScript(() => {
+    const target = window as Window & { __serialController?: ReadableStreamDefaultController<Uint8Array> };
+    Object.defineProperty(navigator, 'serial', {
+      configurable: true,
+      value: {
+        requestPort: async () => ({
+          readable: new ReadableStream<Uint8Array>({ start: controller => { target.__serialController = controller; } }),
+          writable: new WritableStream<Uint8Array>(),
+          open: async () => {},
+          close: async () => {},
+        }),
+      },
+    });
+  });
+  await resumeFixture(page, arrived(7));
+  await page.locator('#m5stack-connect').click();
+  await page.locator('[data-action="vehicles"]').click();
+  await page.locator('[data-buy-vehicle="scooter"]').click();
+  await expect.poll(async () => (await saved(page)).players[0].vehicles).toContain('scooter');
+
+  await page.evaluate(() => {
+    const controller = (window as Window & { __serialController?: ReadableStreamDefaultController<Uint8Array> }).__serialController;
+    if (!controller) throw new Error('Web Serial mock is not ready');
+    controller.enqueue(new TextEncoder().encode('NEXT\n'));
+  });
+  await expect(page.locator('.m5-option-selected')).toHaveAttribute('aria-label', '關閉視窗');
+  await page.evaluate(() => {
+    const controller = (window as Window & { __serialController?: ReadableStreamDefaultController<Uint8Array> }).__serialController;
+    if (!controller) throw new Error('Web Serial mock is not ready');
+    controller.enqueue(new TextEncoder().encode('SELECT\n'));
+  });
+  await expect(page.locator('#modal')).not.toBeVisible();
+  await expect(page.locator('#turn-action')).toBeVisible();
+});
+
 test('bank deposits, withdrawals, trades, and invalid amounts use current prices without extra market ticks', async ({ page }) => {
   const initial = arrived(3); const price = initial.stocks[0].price; await resumeFixture(page, initial);
   await page.locator('[data-action="bank"]').click(); await page.locator('#bank-amount').fill('100'); await page.locator('#bank-form button.primary').click();
