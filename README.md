@@ -19,13 +19,19 @@ npm run build       # TypeScript 檢查與網頁建置
 npm run test:e2e    # Playwright 瀏覽器測試，需安裝 Chrome
 ```
 
+## 公開遊玩（GitHub Pages）
+
+此專案已設定 GitHub Pages 部署流程。將變更推送至 `main` 後，在 GitHub 專案的 **Settings → Pages → Build and deployment** 將來源設為 **GitHub Actions**；部署工作完成後即可在 <https://richtsai1688.github.io/Labu-monopoly-m5stack/> 開啟遊戲。也可從 **Actions → Deploy game to GitHub Pages → Run workflow** 手動部署。
+
+公開版是靜態網站，支援單機對 NPC 和同一瀏覽器／裝置的同桌遊玩；目前未部署跨裝置房間伺服器，邀請好友功能會說明此限制。存檔存在玩家自己的瀏覽器中。
+
 遊戲功能與規則參見[遊玩說明書](docs/PLAYER_GUIDE.md)。Labu 使用內建回覆，不需要 API 金鑰。此版本不包含正式網站的代管設定或資料庫；本機多人房間不等於可供網際網路公開使用的正式伺服器。
 
 新遊戲預設 20 輪，每位玩家持有 1,000 萬元現金和 200 萬元存款；開局時可選其他輪數或無限輪；無限輪只剩一位未破產玩家時結束。
 
 ## 學生專題：搖動 M5Stack 擲骰
 
-目標是用 M5Stack 的加速度感測器辨識搖動，讓遊戲執行一次擲骰。**目前尚未接上硬體**；作業分解、建議架構和驗收條件見 [M5Stack 整合指南](docs/M5STACK_DICE.md)。
+支援 M5StickC Plus 透過 USB Web Serial 搖動擲骰、裝置按鍵選單控制，並在連線時顯示 USB 圖示；也可直接點擊遊戲畫面的「擲骰子」。韌體範例及操作方式見 [M5Stack 搖動擲骰指南](docs/M5STACK_DICE.md)。
 
 ## 主要程式
 
@@ -33,6 +39,7 @@ npm run test:e2e    # Playwright 瀏覽器測試，需安裝 Chrome
 - `src/engine.ts`、`src/game-types.ts`：遊戲狀態、骰子和規則。
 - `src/city.ts`、`src/model-assets.ts`：3D 城市與模型。
 - `src/network.ts`、`server/room-server.ts`：本機多人連線。
+- `src/m5stack-serial.ts`、`hardware/m5stickc-plus-dice/`：USB Web Serial 搖動擲骰與 M5StickC Plus 韌體範例。
 - `server/hosted-rooms.ts`：代管版房間規則，需另行提供相容資料庫與部署設定。
 - `src/**/*.test.ts`、`server/**/*.test.ts`、`tests/`：自動化測試。
 

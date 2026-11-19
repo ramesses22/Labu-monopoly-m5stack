@@ -51,6 +51,55 @@ test('a real UI roll moves one square per market update and resumes exactly afte
   await expect(page.locator('#tick-label')).toContainText('已更新 4 次'); await page.reload(); await page.locator('#resume-game').click(); expect(await saved(page)).toEqual(s); await expect(page.locator('#turn-action')).toContainText('結束回合');
 });
 
+test('screen tap and M5Stack shake both roll while serial is connected', async ({ page }) => {
+  await page.addInitScript(() => {
+    const target = window as Window & {
+      __serialController?: ReadableStreamDefaultController<Uint8Array>;
+      __hostCommands?: string[];
+    };
+    target.__hostCommands = [];
+    Object.defineProperty(navigator, 'serial', {
+      configurable: true,
+      value: {
+        requestPort: async () => ({
+          readable: new ReadableStream<Uint8Array>({ start: controller => { target.__serialController = controller; } }),
+          writable: new WritableStream<Uint8Array>({ write: chunk => { target.__hostCommands?.push(new TextDecoder().decode(chunk)); } }),
+          open: async () => {},
+          close: async () => {},
+        }),
+      },
+    });
+  });
+  const initial = fresh('dual-roll-controls'); initial.nextDice = 1;
+  await resumeFixture(page, initial); await enableFast(page);
+  await page.locator('#m5stack-connect').click(); await expect(page.locator('#m5stack-connect')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => (window as Window & { __hostCommands?: string[] }).__hostCommands)).toContain('CONNECT\n');
+
+  await page.locator('#turn-action').click(); await finishMovement(page);
+  await page.evaluate(() => {
+    const controller = (window as Window & { __serialController?: ReadableStreamDefaultController<Uint8Array> }).__serialController;
+    if (!controller) throw new Error('Web Serial mock is not ready');
+    controller.enqueue(new TextEncoder().encode('NEXT\n'));
+  });
+  await expect(page.locator('.m5-option-selected')).toContainText('購買地產');
+  await page.evaluate(() => {
+    const controller = (window as Window & { __serialController?: ReadableStreamDefaultController<Uint8Array> }).__serialController;
+    if (!controller) throw new Error('Web Serial mock is not ready');
+    controller.enqueue(new TextEncoder().encode('SELECT\n'));
+  });
+  await expect.poll(async () => (await saved(page)).tiles[1].ownerId).toBe('player-0');
+  await page.locator('#turn-action').click(); await waitHuman(page);
+  await page.evaluate(() => {
+    const controller = (window as Window & { __serialController?: ReadableStreamDefaultController<Uint8Array> }).__serialController;
+    if (!controller) throw new Error('Web Serial mock is not ready');
+    controller.enqueue(new TextEncoder().encode('SHAKE\n'));
+  });
+  await expect.poll(async () => (await diagnostics(page)).phase).toBe('moving');
+  await expect(page.locator('#dice-reveal')).toBeVisible();
+  await page.locator('#m5stack-connect').click();
+  await expect.poll(() => page.evaluate(() => (window as Window & { __hostCommands?: string[] }).__hostCommands)).toContain('DISCONNECT\n');
+});
+
 test('bank deposits, withdrawals, trades, and invalid amounts use current prices without extra market ticks', async ({ page }) => {
   const initial = arrived(3); const price = initial.stocks[0].price; await resumeFixture(page, initial);
   await page.locator('[data-action="bank"]').click(); await page.locator('#bank-amount').fill('100'); await page.locator('#bank-form button.primary').click();

@@ -392,6 +392,7 @@ a {
   color: #6d8175;
 }
 .roll-button {
+  touch-action: none;
   background: var(--coral);
   color: white;
   border: none;
@@ -4070,3 +4071,4 @@ button:not(:disabled):active, .view-menu summary:active { filter: brightness(.96
 }
 /* Header dropdowns must remain above a chat panel the player keeps open. */
 .app-header:has(#finance-menu[open]) { z-index: 26; }
+.m5-option-selected { outline: 3px solid #098b76 !important; outline-offset: 3px; position: relative; z-index: 2; }

@@ -1,6 +1,7 @@
 import { renderMoneyFeedback, popupFeedback, disposeFeedback } from "./feedback";
 import { DICE_MOVE_DELAY_MS } from "./presentation-timing";
 const hostedTrial = import.meta.env.MODE === "sites";
+const staticPublic = import.meta.env.MODE === "pages";
 const invitedRoom = (new URLSearchParams(location.search).get('room') || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
 import { gameCalendar, stockQuote, DIVIDENDS, SEASONS } from "./calendar";
 import { npcContext, npcFallback } from "./npc-context";
@@ -29,6 +30,7 @@ import rabbitPortrait from "./assets/rabbit.webp";
 import robotPortrait from "./assets/robot.webp";
 import penguinPortrait from "./assets/penguin.webp";
 import { RoomClient, type RoomSnapshot, type RoomSession } from "./network";
+import { M5StackSerial, supportsWebSerial, type M5StackEvent } from "./m5stack-serial";
 import {
   createGame,
   dispatch,
@@ -170,9 +172,10 @@ let saveFailed = false,
   modalRevision = 0;
 const audio = new GameAudio();
 const music = new GameMusic(musicUrl);
+const m5Stack = new M5StackSerial(handleM5Event, handleM5ConnectionChange);
 const app = $("#app");
 app.innerHTML = `
-<header class="app-header"><a class="brand" href="#" aria-label="玩具城市首頁"><div class="toy-logo"><img class="brand-logo" src="${logoArt}" alt="玩具城市"><small>48 格環城線 · LABU</small></div></a><button class="calendar-badge" id="round" aria-label="遊戲日曆"></button><div class="header-center"><span class="status-dot"></span> ${hostedTrial ? "線上玩具城市" : "本機離線版"} <span class="divider">/</span> 和朋友，蓋一座夢想城市</div><div class="header-actions"><details id="finance-menu"><summary class="icon-button" aria-label="提款卡與股票交易">💳</summary><div class="finance-menu-options"><button id="mobile-market">股票買進／賣出</button><button id="mobile-bank">💳 提款卡 · 存款／提款</button></div></details><button class="text-button invite-button" id="room-open">邀請好友</button><button class="icon-button" id="sound" title="開啟音效" aria-label="開啟音效">♪</button><button class="icon-button" id="help" title="遊戲規則" aria-label="遊戲規則">?</button><button class="icon-button" id="garage-launch" aria-label="車庫與買車" title="車庫與買車">🚘</button><button class="icon-button chat-launch" id="chat-launch" aria-label="開啟聊天" aria-expanded="false" title="同桌聊天">💬<span id="chat-unread" hidden>❗️</span></button><button class="text-button" id="settings">設定</button></div></header>
+<header class="app-header"><a class="brand" href="#" aria-label="玩具城市首頁"><div class="toy-logo"><img class="brand-logo" src="${logoArt}" alt="玩具城市"><small>48 格環城線 · LABU</small></div></a><button class="calendar-badge" id="round" aria-label="遊戲日曆"></button><div class="header-center"><span class="status-dot"></span> ${hostedTrial ? "線上玩具城市" : "本機離線版"} <span class="divider">/</span> 和朋友，蓋一座夢想城市</div><div class="header-actions"><details id="finance-menu"><summary class="icon-button" aria-label="提款卡與股票交易">💳</summary><div class="finance-menu-options"><button id="mobile-market">股票買進／賣出</button><button id="mobile-bank">💳 提款卡 · 存款／提款</button></div></details><button class="text-button invite-button" id="room-open">邀請好友</button><button class="icon-button" id="m5stack-connect" aria-label="連接 M5Stack" aria-pressed="false" title="連接 M5Stack">USB</button><button class="icon-button" id="sound" title="開啟音效" aria-label="開啟音效">♪</button><button class="icon-button" id="help" title="遊戲規則" aria-label="遊戲規則">?</button><button class="icon-button" id="garage-launch" aria-label="車庫與買車" title="車庫與買車">🚘</button><button class="icon-button chat-launch" id="chat-launch" aria-label="開啟聊天" aria-expanded="false" title="同桌聊天">💬<span id="chat-unread" hidden>❗️</span></button><button class="text-button" id="settings">設定</button></div></header>
 <section id="players" class="player-strip" aria-label="玩家資產"></section>
 <main class="game-layout"><section class="world-panel"><div class="world-heading"><div><span class="eyebrow">BUILD A LITTLE WONDER</span><h1>你的城市，你的冒險<span>。</span></h1></div></div><div id="world" aria-label="48格玩具城市3D棋盤"><div class="world-loading">正在組裝玩具城市…</div></div><div class="world-tools"><details id="view-menu" class="view-menu"><summary class="glass-button">🗺 視角</summary><div class="view-options"><button id="reset-view" class="glass-button">${icon("map")} 全圖</button><button id="follow-view" class="glass-button">角色近景</button><button id="board-list" class="glass-button">48 格地圖</button></div></details><span class="world-hint">拖曳旋轉 · 滾輪縮放 · 點選地塊</span></div><div id="dice-reveal" class="dice-reveal" role="status" hidden></div><section id="public-events" class="public-events" aria-label="公開遊戲事件" aria-live="polite"></section><div id="turn-card" class="turn-card"></div></section>
 <aside class="side-panel" aria-label="城市與聊天選單"><nav class="side-tabs"><button data-panel="chat" class="active">同桌聊天 <span class="tiny-dot"></span></button><button id="side-collapse" aria-expanded="false" aria-controls="side-content" aria-label="展開城市與聊天選單">⌃</button></nav><div id="side-content"></div></aside></main>
@@ -210,6 +213,71 @@ function canAct() {
         room?.selfId === current().id &&
         !room.pendingReclaim))
   );
+}
+function canShakeRoll() {
+  return canAct() && state.phase === "roll" && current().jailTurns === 0 && !current().wantedSkip;
+}
+function canNavigateM5Options() {
+  return canAct() && state.phase === "action";
+}
+function updateM5StackButton() {
+  const button = $("#m5stack-connect");
+  button.textContent = "USB";
+  button.setAttribute("aria-pressed", String(m5Stack.connected));
+  button.setAttribute("aria-label", m5Stack.connected ? "中斷 M5Stack" : "連接 M5Stack");
+  button.title = !supportsWebSerial()
+    ? "此瀏覽器不支援 Web Serial；仍可使用畫面擲骰按鈕。"
+    : m5Stack.connected
+      ? "中斷 M5Stack；畫面擲骰按鈕仍可直接使用。"
+      : "透過 USB Web Serial 連接 M5StickC Plus。";
+}
+function m5NavigationScope(): HTMLElement {
+  const modal = $("#modal") as HTMLDialogElement;
+  return modal.open ? $("#modal-body") : $("#turn-card");
+}
+function m5NavigationOptions(): HTMLButtonElement[] {
+  if (!canNavigateM5Options()) return [];
+  return Array.from(m5NavigationScope().querySelectorAll<HTMLButtonElement>("button:not(:disabled)"))
+    .filter(button => !["dismiss-decision", "reopen-decision"].includes(button.id) && !button.classList.contains("modal-close") && button.getClientRects().length > 0)
+    .sort((a, b) => {
+      const first = a.getBoundingClientRect();
+      const second = b.getBoundingClientRect();
+      return first.top - second.top || first.left - second.left;
+    });
+}
+function focusM5Option(button: HTMLButtonElement, index: number, count: number) {
+  document.querySelectorAll(".m5-option-selected").forEach(element => element.classList.remove("m5-option-selected"));
+  button.classList.add("m5-option-selected");
+  button.focus();
+  button.scrollIntoView({ block: "nearest", inline: "nearest" });
+  const label = button.getAttribute("aria-label") || button.innerText.replace(/\s+/g, " ").trim();
+  toast(`選項 ${index + 1}/${count}：${label}`);
+}
+function handleM5Next() {
+  const options = m5NavigationOptions();
+  if (!options.length) return;
+  const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement);
+  const nextIndex = (currentIndex + 1) % options.length;
+  focusM5Option(options[nextIndex], nextIndex, options.length);
+}
+function handleM5Select() {
+  const options = m5NavigationOptions();
+  if (!options.length) return;
+  const focused = options.indexOf(document.activeElement as HTMLButtonElement);
+  const selectedIndex = focused < 0 ? 0 : focused;
+  const selected = options[selectedIndex];
+  focusM5Option(selected, selectedIndex, options.length);
+  selected.click();
+}
+function handleM5Event(event: M5StackEvent) {
+  if (!m5Stack.connected) return;
+  if (event === "SHAKE") {
+    if (canShakeRoll()) act({ type: "roll" });
+  } else if (event === "NEXT") handleM5Next();
+  else handleM5Select();
+}
+function handleM5ConnectionChange() {
+  updateM5StackButton();
 }
 function save() {
   if (!started || roomClient) return;
@@ -279,7 +347,7 @@ function updateCity() {
 function render() {
   $(".header-center").innerHTML = roomClient
     ? `<span class="status-dot"></span> ${networkConnected ? (hostedTrial ? "線上朋友房" : "本機連線房間") : "連線中斷"} · ${esc(room?.code || "")} <span class="divider">/</span> ${room?.pendingReclaim ? "NPC 完成本回合後接回" : "伺服器同步"}`
-    : `<span class="status-dot"></span> ${hostedTrial ? "線上玩具城市" : "本機離線版"} <span class="divider">/</span> 和朋友，蓋一座夢想城市`;
+    : `<span class="status-dot"></span> ${hostedTrial ? "線上玩具城市" : staticPublic ? "公開網頁版 · 單機／同裝置同桌" : "本機離線版"} <span class="divider">/</span> 和朋友，蓋一座夢想城市`;
   $("#players").innerHTML = state.players
     .map(
       (p, i) =>
@@ -413,8 +481,8 @@ function renderTurn() {
   $("#turn-card").innerHTML =
     `<div class="turn-info"><span class="eyebrow">${paused ? "遊戲已暫停" : p.isNpc ? "NPC 正在思考" : "輪到你了，城市建造者"}</span><h3>${avatar[state.currentPlayer]} ${esc(p.name)}${moving ? " · 前進中" : rolling ? "，出發吧！" : ` · ${esc(tile.name)}`}</h3><p>${moving ? `還有 ${state.pendingSteps} 格 · 每走一格，股票更新一次` : rolling ? (p.wantedSkip ? "被通緝：下次擲骰將跳過一次行動，可保釋或使用出獄卡。" : p.jailTurns > 0 ? `正在監獄，剩餘 ${p.jailTurns} 輪；可保釋或等待日曆推進。` : `${p.vehicleId ? VEHICLES.find((v) => v.id === p.vehicleId)?.name : "步行"} · ${getDiceCount(p)} 顆骰子`) : (typeNames[tile.type] || tile.type) + " · 查看右側可用操作"}</p></div><div class="turn-buttons"><button class="small-action" id="my-assets">${icon("home")} 我的資產</button><button class="roll-button" id="turn-action" ${!canAct() ? "disabled" : ""}><span class="dice-hand ${moving ? "moving" : ""}">${(state.dice.length ? state.dice : Array(getDiceCount(p)).fill(5)).map(diceMarkup).join("")}</span>${moving ? "移動中" : rolling ? (p.wantedSkip ? "跳過本次移動" : "擲骰子") : "結束回合"}<span class="button-arrow">→</span></button></div>`;
   $("#my-assets").onclick = () => showAssets(state.currentPlayer);
-  $("#turn-action").onclick = () =>
-    act({ type: rolling ? "roll" : "finishTurn" });
+  const turnAction = $("#turn-action") as HTMLButtonElement;
+  turnAction.onclick = () => act({ type: rolling ? "roll" : "finishTurn" });
 }
 function actionButton(label: string, action: string, extra = "") {
   const p = current(), t = state.tiles[p.position];
@@ -1162,7 +1230,7 @@ function showResults() {
 function showHelp() {
   showModal(
     modalHeader("HOW TO PLAY", "一場小小的城市冒險") +
-      `<ol class="rules"><li><b>擲骰前進</b><p>步行 1 顆骰子，腳踏車／機車 2 顆，汽車 3 顆。點數加總移動，每走一格，六支虛構股票同時更新一次。傳送不更新。</p></li><li><b>買地與建設</b><p>停在無主地產可以購買；自己的地產可升級至三級。各玩家建築外觀不同，收益規則相同。集齊同一街區租金 +50%、付費建設八折；失去任一地產，加成消失。</p></li><li><b>銀行與投資</b><p>股票隨時可買賣；提款卡有 3 次遠端存提款，停到銀行自動補滿；銀行辦理不限次數。每兩輪各街區房價有漲跌，影響售價、估值與租金。必要費用先用現金，再用存款，仍不足將自動清算資產。</p></li><li><b>探索城市設施</b><p>車站、商店、機會廣場、遊樂園、稅務局、監獄和建設中心都有不同效果。監獄可保釋或等待。</p></li><li><b>城市目標與建設卡</b><p>「我的資產 → 城市目標」可查看三種一次性獎勵。道具店的遠端建設卡可在抵達後免費升級任一自己的地產，每回合共限建設一次。</p></li><li><b>惡作劇與防守</b><p>到道具商店買通緝令、小偷、路障、陷阱、停業或換位卡，再從「我的資產」選目標。每回合最多 1 張攻擊卡，手牌上限 5 張；保鑣自動擋一次通緝或偷錢。小偷只偷現金的 10%，最多 30 萬元。通緝最多錯過一次行動，並有保護避免連關。路障與陷阱會在城市全圖標示。</p></li><li><b>獲勝</b><p>達到設定輪數或只剩一位未破產玩家時結算。無限輪不因輪數結算，只剩一位未破產玩家時結束。總資產最高者獲勝。</p></li></ol><p class="fine-print">支援離線同桌或開房邀朋友連線，空位由 NPC 補齊。Labu 私人提醒只顯示於自己的頁面。</p>`,
+      `<ol class="rules"><li><b>擲骰前進</b><p>步行 1 顆骰子，腳踏車／機車 2 顆，汽車 3 顆。點數加總移動，每走一格，六支虛構股票同時更新一次。傳送不更新。</p></li><li><b>買地與建設</b><p>停在無主地產可以購買；自己的地產可升級至三級。各玩家建築外觀不同，收益規則相同。集齊同一街區租金 +50%、付費建設八折；失去任一地產，加成消失。</p></li><li><b>銀行與投資</b><p>股票隨時可買賣；提款卡有 3 次遠端存提款，停到銀行自動補滿；銀行辦理不限次數。每兩輪各街區房價有漲跌，影響售價、估值與租金。必要費用先用現金，再用存款，仍不足將自動清算資產。</p></li><li><b>探索城市設施</b><p>車站、商店、機會廣場、遊樂園、稅務局、監獄和建設中心都有不同效果。監獄可保釋或等待。</p></li><li><b>城市目標與建設卡</b><p>「我的資產 → 城市目標」可查看三種一次性獎勵。道具店的遠端建設卡可在抵達後免費升級任一自己的地產，每回合共限建設一次。</p></li><li><b>惡作劇與防守</b><p>到道具商店買通緝令、小偷、路障、陷阱、停業或換位卡，再從「我的資產」選目標。每回合最多 1 張攻擊卡，手牌上限 5 張；保鑣自動擋一次通緝或偷錢。小偷只偷現金的 10%，最多 30 萬元。通緝最多錯過一次行動，並有保護避免連關。路障與陷阱會在城市全圖標示。</p></li><li><b>獲勝</b><p>達到設定輪數或只剩一位未破產玩家時結算。無限輪不因輪數結算，只剩一位未破產玩家時結束。總資產最高者獲勝。</p></li></ol><p class="fine-print">${staticPublic ? "公開網頁版支援單機／同裝置同桌，跨裝置線上房間未啟用。" : "支援離線同桌或開房邀朋友連線，空位由 NPC 補齊。"} Labu 私人提醒只顯示於自己的頁面。</p>`,
   );
 }
 function showSettings() {
@@ -1303,6 +1371,11 @@ function connectRoom() {
   return client;
 }
 function showRoomDialog() {
+  if (staticPublic) {
+    showModal(modalHeader("PUBLIC WEB DEMO", "公開版未啟用線上房間") +
+      `<p>這個公開網址是靜態遊戲，支援單機對 NPC，以及同一裝置上的本機同桌；未部署跨裝置房間伺服器。</p><p>若要同裝置多人，請重新開局並在「本機真人」選擇玩家人數。</p>`);
+    return;
+  }
   if (room && networkConnected) {
     showRoomWaiting();
     return;
@@ -1424,7 +1497,7 @@ function showLobby() {
       )
       .join(
         "",
-      )}</div><button class="primary full start-game">開始我的城市冒險 <span>→</span></button></form>${hasSave ? '<button id="resume-game" class="resume-button">繼續上一次的城市 →</button>' : ""}<button id="lobby-room" class="${hostedTrial ? "primary full" : "resume-button"}">${hostedTrial ? "開房間 / 加入朋友 · 線上同樂 →" : "邀請好友 · 本機連線房間 →"}</button><small class="lobby-note">${hostedTrial ? "線上朋友房／離線同桌 · 空位 NPC 補齊 · Labu 內建遊戲對話" : "離線同桌測試版 · 不需登入 · Labu 使用模擬資料"}</small></section>`;
+      )}</div><button class="primary full start-game">開始我的城市冒險 <span>→</span></button></form>${hasSave ? '<button id="resume-game" class="resume-button">繼續上一次的城市 →</button>' : ""}<button id="lobby-room" class="${hostedTrial ? "primary full" : "resume-button"}">${hostedTrial ? "開房間 / 加入朋友 · 線上同樂 →" : staticPublic ? "跨裝置線上房間說明 →" : "邀請好友 · 本機連線房間 →"}</button><small class="lobby-note">${hostedTrial ? "線上朋友房／離線同桌 · 空位 NPC 補齊 · Labu 內建遊戲對話" : staticPublic ? "公開靜態版 · 單機／同裝置同桌 · 空位 NPC 補齊" : "離線同桌測試版 · 不需登入 · Labu 使用模擬資料"}</small></section>`;
   $("#lobby-room").onclick = showRoomDialog;
   $("#lobby-form").onsubmit = (e) => {
     e.preventDefault();
@@ -1486,6 +1559,24 @@ function start() {
   schedule();
 }
 $("#room-open").onclick = showRoomDialog;
+$("#m5stack-connect").onclick = async () => {
+  if (!supportsWebSerial()) {
+    toast("此瀏覽器不支援 USB Web Serial；仍可使用畫面上的擲骰按鈕。");
+    return;
+  }
+  if (m5Stack.connected) {
+    await m5Stack.disconnect();
+    toast("M5Stack 已中斷；畫面擲骰按鈕仍可直接遊玩。");
+    return;
+  }
+  try {
+    await m5Stack.connect();
+    toast("M5Stick 已連線，螢幕顯示 USB 圖示；A 鍵搖動擲骰，B 鍵切換選項、A 鍵確認。");
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "無法連接 M5Stack。");
+  }
+};
+updateM5StackButton();
 function toggleSound() {
   muted = !audio.toggle();
   $("#sound").textContent = muted ? "♪" : "♫";
@@ -1558,7 +1649,7 @@ async function restoreOnLoad() {
   const resume = mode === "offline" || mode === "room" || (reload && mode !== "lobby");
   const differentInvite = invitedRoom && invitedRoom !== savedRoom?.code;
   if (resume && !differentInvite) {
-    if (savedRoom && mode !== "offline") {
+    if (savedRoom && mode !== "offline" && !staticPublic) {
       roomSession = savedRoom;
       showModal(modalHeader("WELCOME BACK", "正在接回原房間", "請稍候，正在同步玩家與遊戲進度。") + '<div id="room-lobby" role="status">連線中…</div>');
       const client = connectRoom();
@@ -1588,6 +1679,7 @@ const onPageHide = () => {
   clearTimeout(Number($("#toast")?.dataset.timer));
   clearTimeout(diceRevealTimer);
   clearInterval(diceShuffleTimer);
+  void m5Stack.disconnect();
   city?.dispose(() => modelAssets?.dispose());
   music.dispose();
   disposeFeedback();
@@ -1630,6 +1722,6 @@ Object.defineProperty(window, "__LABU_DIAGNOSTICS__", {
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   navigator.serviceWorker
-    .register("/sw.js")
+    .register(`${import.meta.env.BASE_URL}sw.js`)
     .catch(() => console.warn("離線快取未能啟用，遊戲仍可在本機伺服器運作。"));
 }
